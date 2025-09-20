@@ -1,17 +1,21 @@
 """
 FastAPI application for investment analysis.
 """
+import asyncio
+
 from fastapi import FastAPI, HTTPException
 from typing import List
 from pydantic import BaseModel
-import investing_agent
+import investing_agent_helper as investing_agent
 
 app = FastAPI(title="Investment Analysis API", version="1.0.0")
 
 
 class AnalysisRequest(BaseModel):
     """Request model for investment analysis."""
-    pitchdeck_urls: List[str]
+    documents_url: str
+    company_name: str
+    api_key: str
 
 
 @app.get("/")
@@ -42,10 +46,12 @@ async def analyze_investment(agent_type: str, request: AnalysisRequest):
     
     try:
         # Call the investing agent function
-        result = await investing_agent.run_investment_analysis(request.pitchdeck_urls)
+        # result = await investing_agent.run_investment_analysis(request.pitchdeck_urls).model_dump_json()
+        result = asyncio.run(investing_agent.run_investment_analysis(pitch_deck_urls=investing_agent.fetch_all_required_files(request.documents_url,
+                                                                                                                              request.company_name),
+                                            company_name=request.company_name)).model_dump_json()
         
-        # Add agent type information to the response
-        result["agent_type"] = agent_type
+        # result["agent_type"] = agent_type
         
         return result
         

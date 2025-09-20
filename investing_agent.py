@@ -5,6 +5,7 @@ This module will contain investment analysis functionality.
 from typing import List
 
 
+
 async def run_investment_analysis(pitchdeck_urls: List[str]) -> dict:
     """
     Run investment analysis on the provided pitch deck URLs.

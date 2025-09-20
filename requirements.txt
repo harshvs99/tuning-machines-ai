@@ -1,2 +1,10 @@
+pydantic
+protobuf
+pandas
 fastapi>=0.104.0
 uvicorn>=0.24.0
+google-cloud-storage
+google-cloud-aiplatform
+google-cloud-bigquery
+PyPDF2
+fpdf2
