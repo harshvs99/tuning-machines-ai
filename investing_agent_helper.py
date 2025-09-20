@@ -665,6 +665,9 @@ if __name__ == "__main__":
     # final_state = await run_investment_analysis(pitch_deck_urls = get_files_with_classification(grouped_files_df))
     company_name = "Fabpad"
     folder_path = 'C:\\Users\\Home\\Desktop\\GCP Hackathon\\tuning-machines-ai\\company-analysis-data-tuning-machines'
+    local = True
+    if local:
+        folder_path = os.path.join(os.getcwd(), folder_path)
 
     final_state = asyncio.run(run_investment_analysis(pitch_deck_urls = fetch_all_required_files(folder_path, company_name),
                                                       company_name = company_name))
