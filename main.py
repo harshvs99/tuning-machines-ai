@@ -15,8 +15,6 @@ class AnalysisRequest(BaseModel):
     """Request model for investment analysis."""
     documents_url: str
     company_name: str
-    api_key: str
-
 
 @app.get("/")
 async def root():
@@ -47,10 +45,12 @@ async def analyze_investment(agent_type: str, request: AnalysisRequest):
     try:
         # Call the investing agent function
         # result = await investing_agent.run_investment_analysis(request.pitchdeck_urls).model_dump_json()
-        result = asyncio.run(investing_agent.run_investment_analysis(pitch_deck_urls=investing_agent.fetch_all_required_files(request.documents_url,
-                                                                                                                              request.company_name),
-                                            company_name=request.company_name)).model_dump_json()
-        
+        # result = await investing_agent.run_investment_analysis(pitch_deck_urls=investing_agent.fetch_all_required_files(request.documents_url,
+        #                                                                                                                       request.company_name),
+        #                                     company_name=request.company_name).model_dump_json()
+        final_state = await investing_agent.run_investment_analysis(pitch_deck_urls=investing_agent.fetch_all_required_files(request.documents_url,request.company_name),
+                                                                    company_name=request.company_name)
+        result = final_state.model_dump_json()
         # result["agent_type"] = agent_type
         
         return result

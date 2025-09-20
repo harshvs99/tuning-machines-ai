@@ -19,7 +19,7 @@ import json
 from typing import Type, TypeVar, Dict, List, Optional
 # import vertexai
 # from vertexai.generative_models import GenerativeModel, GenerationResponse
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, Field
 from google import genai
 from google.genai import types
 import asyncio
@@ -254,13 +254,42 @@ class CompetitionAnalysis(BaseModel):
     switching_costs_analysis: str
     summary: str
 
-class FinancialAnalysis(BaseModel):
-    market_size_TAM_in_INR: float
-    required_market_share_for_3yr_amortization: float
-    is_required_market_share_rational: bool
-    unit_economics_summary: str
-    summary: str
+# class FinancialAnalysis(BaseModel):
+#     market_size_TAM_in_INR: float
+#     required_market_share_for_3yr_amortization: float
+#     is_required_market_share_rational: bool
+#     unit_economics_summary: str
+#     summary: str
 
+# Beginning Financial Analysis
+class MarketSize(BaseModel):
+    tam: float = Field(description="Total Addressable Market value in USD.")
+    source: str = Field(description="Where the TAM figure was found (e.g., 'Pitch Deck, slide 8', 'Analyst Estimate').")
+    rationale: str = Field(description="Brief justification for the TAM figure used, especially if estimated.")
+
+class UnitEconomics(BaseModel):
+    revenue_model: str = Field(description="The primary revenue model (e.g., 'B2B SaaS - Per Seat', 'Transactional', 'Marketplace Take Rate').")
+    price_per_unit: float = Field(description="Revenue per unit (e.g., per user per month, per transaction).")
+    variable_cost_per_unit: float = Field(description="Variable cost (COGS) to deliver one unit.")
+    contribution_margin_per_unit: float = Field(description="Calculated as (Price - Variable Cost).")
+    customer_acquisition_cost_cac: float = Field(description="Estimated cost to acquire one new customer.")
+
+class ThreeYearViability(BaseModel):
+    annual_fixed_costs: float = Field(description="Estimated annual fixed costs (burn rate) from salaries, rent, etc.")
+    one_time_development_costs: float = Field(description="Estimated one-time R&D or development costs to be amortized.")
+    total_costs_to_amortize: float = Field(description="Calculated as (Annual Fixed Costs * 3) + One-Time Development Costs.")
+    required_units_to_sell_in_3_years: int = Field(description="Calculated as Total Costs to Amortize / Contribution Margin per Unit.")
+    required_annual_revenue_at_year_3: float = Field(description="The annualized revenue needed to meet the 3-year goal.")
+    required_market_share: float = Field(description="The required percentage of the TAM. Calculated as Required Annual Revenue / TAM.")
+
+class FinancialAnalysis(BaseModel):
+    market_size: MarketSize
+    unit_economics: UnitEconomics
+    three_year_viability_check: ThreeYearViability
+    is_rational_assessment: str = Field(description="A final judgment on whether the required market share is rational and achievable, with a brief explanation.")
+    summary: str = Field(description="A high-level executive summary of the financial viability.")
+    
+# Beginning Synergy Analysis
 class SynergyDetail(BaseModel):     ## Only used in SynergyAnalysis
     portfolio_co: str
     synergy: str
@@ -490,21 +519,59 @@ async def run_agent_6_financials(state: AnalysisSharedState) -> FinancialAnalysi
     prompt = f"""
     You are a Financial Analyst. Assess the financial viability based on the deck.
     - Market Info: {state.industry_analysis.summary}
-    - Pitch Deck Text: Attatched to prompt
+    - Pitch Deck Text: Attached to prompt
 
     1.  Extract the Total Addressable Market (TAM) value. If not present, estimate it based on the industry.
     2.  Based on the financials (costs, pricing), estimate the percentage of the TAM the company needs to capture in 3 years to amortize its costs and be profitable.
     3.  Is this required market share percentage rational and achievable?
     4.  Summarize the unit economics (e.g., LTV/CAC, margins) if data is available.
-
-    Return your analysis as a JSON object matching the FinancialAnalysis schema.
+    
+    **Your Step-by-Step Task:**
+    You must perform the following analysis in order.
+    
+    **Step 1: Determine Market Size (TAM).**
+    - Find the Total Addressable Market (TAM) figure in the pitch deck.
+    - Note the source (e.g., which slide).
+    - If not present, estimate the TAM based on the industry and provide a clear rationale for your estimation.
+    
+    **Step 2: Deconstruct the Revenue Model.**
+    - Identify the core revenue model (e.g., SaaS, transactional).
+    - Find the price per unit (e.g., price per seat per month).
+    
+    **Step 3: Calculate Unit Economics.**
+    - Find or estimate the variable costs (COGS) to deliver one unit.
+    - Calculate the Contribution Margin per Unit (Price - COGS).
+    - Find or estimate the Customer Acquisition Cost (CAC).
+    
+    **Step 4: Analyze the Cost Structure.**
+    - Find or estimate the annual fixed costs (burn rate), which includes salaries, rent, and G&A.
+    - Find or estimate any significant one-time development costs mentioned.
+    
+    **Step 5: Perform the 3-Year Viability Check.**
+    - This is a critical sanity check to see if the business can become self-sustaining.
+    - First, calculate the `Total Costs to Amortize` over 3 years using the formula: `(Annual Fixed Costs * 3) + One-Time Development Costs`.
+    - Second, calculate the `Required Units to Sell in 3 Years` using the formula: `Total Costs to Amortize / Contribution Margin per Unit`.
+    - Third, calculate the `Required Annual Revenue at Year 3` based on the number of units that need to be sold.
+    - Finally, calculate the `Required Market Share` percentage using the formula: `Required Annual Revenue / TAM`.
+    
+    **Step 6: Make a Rationality Assessment.**
+    - Based on the final `Required Market Share` percentage, provide a concluding judgment. Is capturing this much of the market in 3 years plausible, ambitious, or unrealistic for a startup in this industry? Justify your answer.
+    
+    Now, perform your step-by-step analysis and return your analysis as a JSON object matching the FinancialAnalysis schema.
     """
+
     prompt = fetch_input_pdf(prompt_pdf_input= state.source_pitch_deck_urls) + [prompt]
     agent_system_instruction = """
       #### **Agent 6: Financial Analyst**
-      **Your Persona:** You are a pragmatic **Financial Analyst**. You are skeptical of vanity metrics and focus on the fundamental viability of a business model.
+      **Your Persona:** You are a pragmatic **Financial Analyst** for a top-tier VC firm. You are deeply skeptical of projections 
+        and believe in first-principles analysis. Your primary job is to sanity-check the business model's viability. 
+        You are skeptical of vanity metrics and focus on the fundamental viability of a business model.
       **Your Framework:** You will analyze the unit economics, market size (TAM), and the rationality of the market share required for profitability.
       **Your Central Question:** "Can this company realistically make enough money to become a venture-scale business?"
+
+      **Global Rules:**
+      1.  **No Hallucination:** If a specific number (e.g., CAC, fixed costs) is not in the text, you must state that you are estimating it based on industry standards for a company of this type and stage. **Always show your work.**
+      2.  **JSON Output Only:** Your final output MUST be a single, valid JSON object matching the `FinancialAnalysis` schema.
     """
     return await invoke_gemini_agent("6 (Financials)", prompt, FinancialAnalysis, agent_system_instruction)
 

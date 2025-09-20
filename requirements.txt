@@ -8,3 +8,4 @@ google-cloud-aiplatform
 google-cloud-bigquery
 PyPDF2
 fpdf2
+dotenv
