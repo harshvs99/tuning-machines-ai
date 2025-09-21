@@ -254,41 +254,46 @@ class CompetitionAnalysis(BaseModel):
     switching_costs_analysis: str
     summary: str
 
-# class FinancialAnalysis(BaseModel):
-#     market_size_TAM_in_INR: float
-#     required_market_share_for_3yr_amortization: float
-#     is_required_market_share_rational: bool
-#     unit_economics_summary: str
-#     summary: str
+# Financial Model Analysis
+class DeckMarketClaims(BaseModel):
+    """A model to store the market size figures as claimed in the pitch deck."""
+    tam: Optional[float] = Field(None, description="TAM as claimed by the startup.")
+    sam: Optional[float] = Field(None, description="SAM as claimed by the startup.")
+    som: Optional[float] = Field(None, description="SOM as claimed by the startup.")
 
-# Beginning Financial Analysis
-class MarketSize(BaseModel):
-    tam: float = Field(description="Total Addressable Market value in USD.")
-    source: str = Field(description="Where the TAM figure was found (e.g., 'Pitch Deck, slide 8', 'Analyst Estimate').")
-    rationale: str = Field(description="Brief justification for the TAM figure used, especially if estimated.")
+class AnalystMarketSizing(BaseModel):
+    """A model for the agent's independent market size analysis."""
+    tam: float = Field(description="Total Addressable Market value in USD, as calculated by the analyst.")
+    customer_segment_profile: str = Field(description="Description of the target customer segments (e.g., 'B2C: NCCS A, Urban Males 25-40' or 'B2B: Mid-Market SaaS companies in North America').")
+    sam: float = Field(description="Serviceable Addressable Market value in USD, as calculated by the analyst.")
+    som: float = Field(description="Serviceable Obtainable Market value in USD, as calculated by the analyst.")
+    som_rationale: str = Field(description="Brief justification for the SAM-to-SOM reduction (e.g., 'Limited to North America in the first 3 years').")
 
 class UnitEconomics(BaseModel):
-    revenue_model: str = Field(description="The primary revenue model (e.g., 'B2B SaaS - Per Seat', 'Transactional', 'Marketplace Take Rate').")
+    revenue_model: str = Field(description="The primary revenue model (e.g., 'B2B SaaS - Per Seat', 'Transactional').")
     price_per_unit: float = Field(description="Revenue per unit (e.g., per user per month, per transaction).")
-    variable_cost_per_unit: float = Field(description="Variable cost (COGS) to deliver one unit.")
+    variable_cost_per_unit: float = Field(description="Variable cost (COGS) to deliver one unit. State if estimated.")
     contribution_margin_per_unit: float = Field(description="Calculated as (Price - Variable Cost).")
-    customer_acquisition_cost_cac: float = Field(description="Estimated cost to acquire one new customer.")
+    customer_acquisition_cost_cac: float = Field(description="Estimated cost to acquire one new customer. State if estimated.")
 
 class ThreeYearViability(BaseModel):
-    annual_fixed_costs: float = Field(description="Estimated annual fixed costs (burn rate) from salaries, rent, etc.")
-    one_time_development_costs: float = Field(description="Estimated one-time R&D or development costs to be amortized.")
+    annual_fixed_costs: float = Field(description="Estimated annual fixed costs (burn rate). State if estimated.")
+    one_time_development_costs: float = Field(description="Estimated one-time R&D or development costs to be amortized. State if estimated or not found.")
     total_costs_to_amortize: float = Field(description="Calculated as (Annual Fixed Costs * 3) + One-Time Development Costs.")
-    required_units_to_sell_in_3_years: int = Field(description="Calculated as Total Costs to Amortize / Contribution Margin per Unit.")
-    required_annual_revenue_at_year_3: float = Field(description="The annualized revenue needed to meet the 3-year goal.")
-    required_market_share: float = Field(description="The required percentage of the TAM. Calculated as Required Annual Revenue / TAM.")
+    required_annual_revenue_at_year_3: float = Field(description="The annualized revenue needed to meet the 3-year amortization goal.")
+    required_som_share: float = Field(description="The required percentage of the Analyst-calculated SOM. Calculated as Required Annual Revenue / Analyst's SOM.")
 
 class FinancialAnalysis(BaseModel):
-    market_size: MarketSize
+    deck_claims: Optional[DeckMarketClaims] = Field(description="Market size figures as presented in the pitch deck. Null if not provided.")
+    analyst_sizing: AnalystMarketSizing = Field(description="The agent's independent, bottom-up market size analysis.")
+    sizing_discrepancy_rationale: Optional[str] = Field(None, description="If the analyst's sizing differs significantly from the deck's claims, this field explains why the analyst's approach is more realistic.")
     unit_economics: UnitEconomics
     three_year_viability_check: ThreeYearViability
-    is_rational_assessment: str = Field(description="A final judgment on whether the required market share is rational and achievable, with a brief explanation.")
+    is_rational_assessment: str = Field(description="A final judgment on whether capturing the required SOM share is rational and achievable, with a brief explanation.")
+    missing_data_callouts: List[str] = Field(description="A list of critical financial numbers that were not found in the deck and had to be estimated.")
     summary: str = Field(description="A high-level executive summary of the financial viability.")
-    
+
+
 # Beginning Synergy Analysis
 class SynergyDetail(BaseModel):     ## Only used in SynergyAnalysis
     portfolio_co: str
@@ -517,47 +522,51 @@ async def run_agent_5_competition(state: AnalysisSharedState) -> CompetitionAnal
 
 async def run_agent_6_financials(state: AnalysisSharedState) -> FinancialAnalysis:
     prompt = f"""
-    You are a Financial Analyst. Assess the financial viability based on the deck.
-    - Market Info: {state.industry_analysis.summary}
-    - Pitch Deck Text: Attached to prompt
-
-    1.  Extract the Total Addressable Market (TAM) value. If not present, estimate it based on the industry.
-    2.  Based on the financials (costs, pricing), estimate the percentage of the TAM the company needs to capture in 3 years to amortize its costs and be profitable.
-    3.  Is this required market share percentage rational and achievable?
-    4.  Summarize the unit economics (e.g., LTV/CAC, margins) if data is available.
-    
-    **Your Step-by-Step Task:**
-    You must perform the following analysis in order.
-    
-    **Step 1: Determine Market Size (TAM).**
-    - Find the Total Addressable Market (TAM) figure in the pitch deck.
-    - Note the source (e.g., which slide).
-    - If not present, estimate the TAM based on the industry and provide a clear rationale for your estimation.
-    
-    **Step 2: Deconstruct the Revenue Model.**
-    - Identify the core revenue model (e.g., SaaS, transactional).
-    - Find the price per unit (e.g., price per seat per month).
-    
-    **Step 3: Calculate Unit Economics.**
-    - Find or estimate the variable costs (COGS) to deliver one unit.
-    - Calculate the Contribution Margin per Unit (Price - COGS).
-    - Find or estimate the Customer Acquisition Cost (CAC).
-    
-    **Step 4: Analyze the Cost Structure.**
-    - Find or estimate the annual fixed costs (burn rate), which includes salaries, rent, and G&A.
-    - Find or estimate any significant one-time development costs mentioned.
-    
-    **Step 5: Perform the 3-Year Viability Check.**
-    - This is a critical sanity check to see if the business can become self-sustaining.
-    - First, calculate the `Total Costs to Amortize` over 3 years using the formula: `(Annual Fixed Costs * 3) + One-Time Development Costs`.
-    - Second, calculate the `Required Units to Sell in 3 Years` using the formula: `Total Costs to Amortize / Contribution Margin per Unit`.
-    - Third, calculate the `Required Annual Revenue at Year 3` based on the number of units that need to be sold.
-    - Finally, calculate the `Required Market Share` percentage using the formula: `Required Annual Revenue / TAM`.
-    
-    **Step 6: Make a Rationality Assessment.**
-    - Based on the final `Required Market Share` percentage, provide a concluding judgment. Is capturing this much of the market in 3 years plausible, ambitious, or unrealistic for a startup in this industry? Justify your answer.
-    
-    Now, perform your step-by-step analysis and return your analysis as a JSON object matching the FinancialAnalysis schema.
+       #### **Agent 6: Financial Analyst**
+        **Your Persona:** You are a pragmatic **Financial Analyst** for a top-tier VC firm. You are deeply skeptical of projections and believe in first-principles analysis. Your primary job is to sanity-check the business model's viability.
+        **Your Central Question:** "Can this company realistically make enough money to become a venture-scale business?"
+        
+        **Global Rules:**
+        1.  **No Hallucination:** If a specific number is not in the text, you must state that you are estimating it based on industry standards. **Always show your work and explicitly list all estimated figures in the `missing_data_callouts` field.**
+        2.  **JSON Output Only:** Your final output MUST be a single, valid JSON object matching the `FinancialAnalysisFinal` schema.
+        
+        **Your Step-by-Step Task:**
+        You must perform the following analysis in order.
+        
+        **Step 1: Document the Startup's Claims.**
+        - Carefully scan the entire pitch deck for any stated TAM, SAM, or SOM figures.
+        - If found, populate the `deck_claims` object with these numbers. If they are not mentioned, leave this object as null.
+        
+        **Step 2: Perform Independent Market Sizing.**
+        - **Regardless of what you found in Step 1**, you will now perform your own independent analysis.
+        - First, analyze the product to define the target customer segment (B2C demographics or B2B firmographics).
+        - Then, conduct a bottom-up analysis to calculate your own figures for TAM, SAM, and SOM. Populate these in the `analyst_sizing` object.
+        - Provide a clear rationale for your SOM calculation (e.g., geographic or channel limitations).
+        
+        **Step 3: Reconcile Sizing Discrepancies.**
+        - Compare your calculated figures in `analyst_sizing` with the startup's figures in `deck_claims`.
+        - If there is a significant difference (e.g., >20%), you must provide a brief, critical explanation in the `sizing_discrepancy_rationale` field. Explain why your methodology or assumptions are more realistic than the startup's. (e.g., "The deck's TAM incorrectly includes adjacent markets, while our analysis is focused on the core market.").
+        
+        **Step 4: Deconstruct Unit Economics.**
+        - Identify the revenue model, price per unit, variable cost per unit, and Customer Acquisition Cost (CAC). Estimate any missing values.
+        - Calculate the Contribution Margin per Unit.
+        
+        **Step 5: Analyze the Cost Structure.**
+        - Find or estimate the annual fixed costs and any one-time fixed investments.
+        
+        **Step 6: Perform the 3-Year Viability Check (Using YOUR numbers).**
+        - Calculate the `Total Costs to Amortize` over 3 years.
+        - Calculate the `Required Annual Revenue at Year 3` to cover these costs.
+        - Calculate the `Required SOM Share` percentage using the formula: `Required Annual Revenue / YOUR Analyst-Calculated SOM`. **Do not use the deck's SOM.**
+        
+        **Step 7: Make a Rationality Assessment.**
+        - Based on the final `Required SOM Share` percentage you calculated, provide a concluding judgment. Is capturing this much of the obtainable market in 3 years plausible, ambitious, or unrealistic? Justify your answer.
+        
+        **Context for Analysis:**
+        - **Market Info:** `{state.industry_analysis.summary}`
+        - **Pitch Deck Text:** [Pitch deck content will be provided here]
+        
+        Now, perform your step-by-step analysis and return your analysis as a JSON object matching the `FinancialAnalysis` schema.
     """
 
     prompt = fetch_input_pdf(prompt_pdf_input= state.source_pitch_deck_urls) + [prompt]
