@@ -3,10 +3,10 @@
 Original file is located at
     https://colab.research.google.com/drive/1GJv0LRheNdvo567SvyEOLoqpJrwMhNPb
 """
-from google.cloud.aiplatform_v1beta1 import GenerateContentResponse
-
 # !pip install --quiet google-cloud-storage google-cloud-aiplatform google-cloud-bigquery PyPDF2 fpdf2
 # !gcloud config set project tuning-machines
+
+from google.cloud.aiplatform_v1beta1 import GenerateContentResponse
 
 """## Project Config"""
 
@@ -16,7 +16,7 @@ PROJECT_ID = 'tuning-machines'
 
 """## Imports"""
 import json
-from typing import Type, TypeVar, Dict, List, Optional
+from typing import Type, TypeVar, Dict, List, Optional, Literal
 # import vertexai
 # from vertexai.generative_models import GenerativeModel, GenerationResponse
 from pydantic import BaseModel, ValidationError, Field
@@ -32,7 +32,6 @@ if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY environment variable not set.")
 client = genai.Client(api_key=GEMINI_API_KEY)
 MODEL_ID = "gemini-2.5-flash-lite"
-
 
 """## Load (and Classify) Input Files"""
 from fpdf import FPDF
@@ -149,6 +148,20 @@ def fetch_all_required_files(folder_path, company_name, classification_list = []
 
 """# Execution"""
 
+
+def fetch_input_pdf(prompt_pdf_input):
+  research_pdf = []
+  for each_pdf in prompt_pdf_input:
+    research_pdf.append(
+        client.files.upload(
+      file=each_pdf,
+      config=dict(mime_type='application/pdf')
+      )
+    )
+
+  return research_pdf
+
+
 """## Orchestrator Implementation"""
 
 """### Output Schemas
@@ -171,6 +184,17 @@ def fetch_all_required_files(folder_path, company_name, classification_list = []
     *   `pitch_deck_text`: Full text from the pitch deck.
     *   `product_demo_transcript` (Optional): Transcript from a product demo video or call.
 """
+class FactorScore(BaseModel):
+    """A standardized model for scoring a specific investment factor."""
+    score: int = Field(description="The quantitative score from 1 (deal-breaker) to 5 (exceptional).")
+    rating: Literal[
+        "Exceptional",
+        "Strong Positive",
+        "Neutral",
+        "Minor Concern",
+        "Significant Concern / Deal-Breaker"
+    ] = Field(description="The qualitative rating corresponding to the score.")
+    rationale: str = Field(description="A concise, evidence-based justification for the assigned score.")
 
 class FounderAnalysis(BaseModel):
     founder_count: int
@@ -180,7 +204,9 @@ class FounderAnalysis(BaseModel):
     are_strengths_relevant_for_industry: bool
     deal_breaker_skill_missing: bool
     summary: str
+    assessment: FactorScore = Field(description="The overall assessment of the startup's founders.")
 
+## Industry Analysis
 class PorterFiveForces(BaseModel):    #Only used as a part of the larger Industry Analysis JSON
     bargaining_power_of_suppliers: str
     bargaining_power_of_buyers: str
@@ -195,7 +221,9 @@ class IndustryAnalysis(BaseModel):
     porter_five_forces_summary: PorterFiveForces
     is_aligned_with_thesis: bool
     summary: str
+    assessment: FactorScore = Field(description="The overall assessment of the startup's industry.")
 
+## Product Analysis
 class ProductAnalysis(BaseModel):
     core_product_offering: str
     problem_solved: str
@@ -203,6 +231,7 @@ class ProductAnalysis(BaseModel):
     value_proposition_quantitative: str
     direct_substitutes: List[str]
     summary: str
+    assessment: FactorScore = Field(description="The overall assessment of the startup's product.")
 
 """**Agent 4: Externalities Analyst**
 *   **Primary Goal:** Identify external (PESTLE) risks and threats.
@@ -231,21 +260,36 @@ class ProductAnalysis(BaseModel):
     *   `externalities_analysis`: The `ExternalitiesAnalysis` object from Agent 4.
     *   `vc_portfolio_data`: A structured description of the fund's current portfolio companies.
 """
-class PestleSensitivities(BaseModel): # Only used in ExternalitiesAnalysis
-    political: List[str]
-    economic: List[str]
-    social: List[str]
-    technological: List[str]
-    legal: List[str]
-    environmental: List[str]
+# class PestleSensitivities(BaseModel): # Only used in ExternalitiesAnalysis
+#     political: List[str]
+#     economic: List[str]
+#     social: List[str]
+#     technological: List[str]
+#     legal: List[str]
+#     environmental: List[str]
+#
+# class ExternalitiesAnalysis(BaseModel):
+#     pestle_sensitivities: PestleSensitivities
+#     key_threats: List[str]
+#     imminent_threats_based_on_macro_climate: List[str]
+#     existential_threat_identified: bool
+#     summary: str
+#     assessment: FactorScore = Field(description="The overall assessment of the startup's externalities.")
+
+""" ## Model for company-specific externalities analysis."""
+class SpecificRisk(BaseModel):
+    category: Literal["Political", "Economic", "Social", "Technological", "Legal", "Environmental"] = Field(description="The PESTLE category this risk falls under.")
+    risk_description: str = Field(description="A concise description of the specific risk.")
+    impact: Literal["Low", "Medium", "High", "Existential"] = Field(description="The potential impact of this risk on the company's success.")
+    rationale: str = Field(description="A clear and direct explanation of *why* this risk applies to this specific company's product or market.")
 
 class ExternalitiesAnalysis(BaseModel):
-    pestle_sensitivities: PestleSensitivities
-    key_threats: List[str]
-    imminent_threats_based_on_macro_climate: List[str]
-    existential_threat_identified: bool
-    summary: str
+    identified_risks: List[SpecificRisk] = Field(description="A curated list of the most relevant, company-specific external risks.")
+    existential_threat_identified: bool = Field(description="A boolean flag that is true if any identified risk has an 'Existential' impact.")
+    summary: str = Field(description="An executive summary of the key external risk factors facing the company.")
+    assessment: FactorScore
 
+## Competition Analysis
 class CompetitionAnalysis(BaseModel):
     direct_competitors: List[str]
     best_alternative_solution: str
@@ -253,8 +297,9 @@ class CompetitionAnalysis(BaseModel):
     net_positive_for_decision_maker: bool
     switching_costs_analysis: str
     summary: str
+    assessment: FactorScore = Field(description="The overall assessment of the startup's competitive landscape.")
 
-# Financial Model Analysis
+## Financial Model Analysis
 class DeckMarketClaims(BaseModel):
     """A model to store the market size figures as claimed in the pitch deck."""
     tam: Optional[float] = Field(None, description="TAM as claimed by the startup.")
@@ -281,7 +326,7 @@ class ThreeYearViability(BaseModel):
     one_time_development_costs: float = Field(description="Estimated one-time R&D or development costs to be amortized. State if estimated or not found.")
     total_costs_to_amortize: float = Field(description="Calculated as (Annual Fixed Costs * 3) + One-Time Development Costs.")
     required_annual_revenue_at_year_3: float = Field(description="The annualized revenue needed to meet the 3-year amortization goal.")
-    required_som_share: float = Field(description="The required percentage of the Analyst-calculated SOM. Calculated as Required Annual Revenue / Analyst's SOM.")
+    required_som_share: float = Field(description="The required fraction of the Analyst-calculated SOM. Calculated as Required Annual Revenue / Analyst's SOM.")
 
 class FinancialAnalysis(BaseModel):
     deck_claims: Optional[DeckMarketClaims] = Field(description="Market size figures as presented in the pitch deck. Null if not provided.")
@@ -292,6 +337,7 @@ class FinancialAnalysis(BaseModel):
     is_rational_assessment: str = Field(description="A final judgment on whether capturing the required SOM share is rational and achievable, with a brief explanation.")
     missing_data_callouts: List[str] = Field(description="A list of critical financial numbers that were not found in the deck and had to be estimated.")
     summary: str = Field(description="A high-level executive summary of the financial viability.")
+    assessment: FactorScore = Field(description="The overall assessment of the startup's financial viability.")
 
 
 # Beginning Synergy Analysis
@@ -304,6 +350,7 @@ class SynergyAnalysis(BaseModel):
     solves_identified_skill_gap: bool
     solves_identified_external_threat: bool
     summary: str
+    assessment: FactorScore = Field(description="The overall assessment of the startup's synergy.")
 
 """**Combined Agent - Define the Shared State**
 """
@@ -406,7 +453,19 @@ async def run_agent_1_founders(source_pitch_deck_urls: List[str]) -> FounderAnal
     c) What crucial business skills (e.g., technical, sales, operations) are covered?
     d) What crucial skills appear to be missing?
     e) Are there any obvious deal-breakers in the team's composition?
-
+    
+    Based on your entire analysis for your specific area of expertise, provide a final quantitative assessment by populating the `assessment` field in your response. You MUST use the following 1-5 scoring rubric. Your rationale must be a concise justification for the score, citing specific evidence from your analysis.
+    **--- SCORING RUBRIC ---**
+        *   **Score 5: Exceptional**
+            *   This factor is a massive strength and a core reason to invest. It represents a world-class, top 1% advantage (e.g., a truly visionary founding team with deep, relevant experience; a massive, untapped market with no competition; a product with an unassailable moat).
+        *   **Score 4: Strong Positive**
+            *   This factor is a clear strength and significantly better than average. It contributes positively to the investment thesis but may not be a generational outlier (e.g., a very strong team with some minor gaps; a large, growing market; a product with clear differentiation).
+        *   **Score 3: Neutral / Average**
+            *   This factor meets expectations but is not a significant strength or weakness. It is credible and fundable but not a core differentiator (e.g., a capable team that is standard for this stage; a well-defined market; a solid product that does its job).
+        *   **Score 2: Minor Concern**
+            *   This factor presents a noticeable weakness or risk that needs to be addressed. It is a yellow flag that requires further diligence but is likely fixable (e.g., a clear skill gap in the team; a crowded market with unclear differentiation; a product with usability issues).
+        *   **Score 1: Significant Concern / Deal-Breaker**
+            *   This factor is a major flaw that fundamentally undermines the investment thesis. It is a red flag and a likely reason to pass on the deal (e.g., a non-credible or incomplete team; a non-existent or shrinking market; a product with no clear value proposition or fatal flaws).
 
     Return your analysis as a JSON object matching the FounderAnalysis schema.
     """
@@ -433,6 +492,19 @@ async def run_agent_2_industry(source_pitch_deck_urls: List[str], thesis: str) -
     VC Investment Thesis: "{thesis}"
 
     Pitch Deck: Attached to prompt
+    
+    Based on your entire analysis for your specific area of expertise, provide a final quantitative assessment by populating the `assessment` field in your response. You MUST use the following 1-5 scoring rubric. Your rationale must be a concise justification for the score, citing specific evidence from your analysis.
+    **--- SCORING RUBRIC ---**
+        *   **Score 5: Exceptional**
+            *   This factor is a massive strength and a core reason to invest. It represents a world-class, top 1% advantage (e.g., a truly visionary founding team with deep, relevant experience; a massive, untapped market with no competition; a product with an unassailable moat).
+        *   **Score 4: Strong Positive**
+            *   This factor is a clear strength and significantly better than average. It contributes positively to the investment thesis but may not be a generational outlier (e.g., a very strong team with some minor gaps; a large, growing market; a product with clear differentiation).
+        *   **Score 3: Neutral / Average**
+            *   This factor meets expectations but is not a significant strength or weakness. It is credible and fundable but not a core differentiator (e.g., a capable team that is standard for this stage; a well-defined market; a solid product that does its job).
+        *   **Score 2: Minor Concern**
+            *   This factor presents a noticeable weakness or risk that needs to be addressed. It is a yellow flag that requires further diligence but is likely fixable (e.g., a clear skill gap in the team; a crowded market with unclear differentiation; a product with usability issues).
+        *   **Score 1: Significant Concern / Deal-Breaker**
+            *   This factor is a major flaw that fundamentally undermines the investment thesis. It is a red flag and a likely reason to pass on the deal (e.g., a non-credible or incomplete team; a non-existent or shrinking market; a product with no clear value proposition or fatal flaws).
 
     Return your analysis as a JSON object matching the IndustryAnalysis schema.
     """
@@ -457,6 +529,19 @@ async def run_agent_3_product(source_pitch_deck_urls: List[str]) -> ProductAnaly
     e) What are the direct substitutes or alternatives the customer is using today?
 
     Pitch Deck: Attached to prompt
+    
+    Based on your entire analysis for your specific area of expertise, provide a final quantitative assessment by populating the `assessment` field in your response. You MUST use the following 1-5 scoring rubric. Your rationale must be a concise justification for the score, citing specific evidence from your analysis.
+    **--- SCORING RUBRIC ---**
+        *   **Score 5: Exceptional**
+            *   This factor is a massive strength and a core reason to invest. It represents a world-class, top 1% advantage (e.g., a truly visionary founding team with deep, relevant experience; a massive, untapped market with no competition; a product with an unassailable moat).
+        *   **Score 4: Strong Positive**
+            *   This factor is a clear strength and significantly better than average. It contributes positively to the investment thesis but may not be a generational outlier (e.g., a very strong team with some minor gaps; a large, growing market; a product with clear differentiation).
+        *   **Score 3: Neutral / Average**
+            *   This factor meets expectations but is not a significant strength or weakness. It is credible and fundable but not a core differentiator (e.g., a capable team that is standard for this stage; a well-defined market; a solid product that does its job).
+        *   **Score 2: Minor Concern**
+            *   This factor presents a noticeable weakness or risk that needs to be addressed. It is a yellow flag that requires further diligence but is likely fixable (e.g., a clear skill gap in the team; a crowded market with unclear differentiation; a product with usability issues).
+        *   **Score 1: Significant Concern / Deal-Breaker**
+            *   This factor is a major flaw that fundamentally undermines the investment thesis. It is a red flag and a likely reason to pass on the deal (e.g., a non-credible or incomplete team; a non-existent or shrinking market; a product with no clear value proposition or fatal flaws).
 
     Return your analysis as a JSON object matching the ProductAnalysis schema.
     """
@@ -472,18 +557,51 @@ async def run_agent_3_product(source_pitch_deck_urls: List[str]) -> ProductAnaly
 
 async def run_agent_4_externalities(state: AnalysisSharedState) -> ExternalitiesAnalysis:
     prompt = f"""
-    You are a Risk Analyst. Your task is to perform a PESTLE analysis.
-    Given the defined industry and product, identify potential external risks.
-    - Industry: {state.industry_analysis.activity_based_industry}
-    - Product: {state.product_analysis.core_product_offering}
-    - Current Macro Climate: Assume a climate of high interest rates and geopolitical instability.
+    **Agent 4: Externalities Analyst**
+    **Your Persona:** You are a pragmatic **Risk Analyst** for a top-tier VC firm. You ignore generic, systemic risks like "global recessions" or "geopolitical tensions." Your entire focus is on identifying concrete, company-specific threats that arise from the external environment.
+    **Your Central Question:** "What specific external factor, that the founders might be ignoring, could derail this specific business?"
+    
+    **Global Rules:**
+    1.  **Specificity is Mandatory:** Every risk you identify must be directly tied to the company's specific product, business model, or target market. Do not list vague, global risks.
+    2.  **JSON Output Only:** Your final output MUST be a single, valid JSON object matching the `ExternalitiesAnalysisSpecific` schema.
 
-    1.  Identify Political, Economic, Social, Technological, Legal, and Environmental sensitivities.
-    2.  List the top 3-5 key threats to the business.
-    3.  Based on the macro climate, which of these are imminent threats?
-    4.  Are any of these threats existential?
+    **Your Step-by-Step Task:**
+    Your task is to identify the top 3-5 most significant, *specific* external risks for this company.
+    
+    **Step 1: Analyze the Context.**
+    - Review the provided information carefully:
+        - **Industry:** `{state.industry_analysis.activity_based_industry}`
+        - **Product:** `{state.product_analysis.core_product_offering}`
+    
+    **Step 2: Identify and Justify Specific Risks.**
+    - For each PESTLE category, consider how it could *directly* impact the company.
+    - Instead of "Political instability," think: "A new trade tariff (Political) could increase the cost of the specific hardware components this company relies on."
+    - Instead of "Changing social norms," think: "Growing public demand for data privacy (Social) could create negative sentiment around their data collection practices."
+    - For each risk you identify, you must populate a `SpecificRisk` object with:
+        1.  **category**: The PESTLE category.
+        2.  **risk_description**: A one-sentence summary of the threat.
+        3.  **impact**: Your assessment of the impact (Low, Medium, High, or Existential).
+        4.  **rationale**: The crucial sentence explaining *why* this risk is relevant to *this specific company*.
+    
+    **Step 3: Summarize and Assess.**
+    - After identifying the key risks, write a concise executive summary.
+    - Determine if any risk qualifies as an existential threat.
+    - Finally, provide your overall quantitative assessment using the scoring rubric.
 
-    Return your analysis as a JSON object matching the ExternalitiesAnalysis schema.
+    Based on your entire analysis for your specific area of expertise, provide a final quantitative assessment by populating the `assessment` field in your response. You MUST use the following 1-5 scoring rubric. Your rationale must be a concise justification for the score, citing specific evidence from your analysis.
+    **--- SCORING RUBRIC ---**
+        *   **Score 5: Exceptional**
+            *   This factor is a massive strength and a core reason to invest. It represents a world-class, top 1% advantage (e.g., a truly visionary founding team with deep, relevant experience; a massive, untapped market with no competition; a product with an unassailable moat).
+        *   **Score 4: Strong Positive**
+            *   This factor is a clear strength and significantly better than average. It contributes positively to the investment thesis but may not be a generational outlier (e.g., a very strong team with some minor gaps; a large, growing market; a product with clear differentiation).
+        *   **Score 3: Neutral / Average**
+            *   This factor meets expectations but is not a significant strength or weakness. It is credible and fundable but not a core differentiator (e.g., a capable team that is standard for this stage; a well-defined market; a solid product that does its job).
+        *   **Score 2: Minor Concern**
+            *   This factor presents a noticeable weakness or risk that needs to be addressed. It is a yellow flag that requires further diligence but is likely fixable (e.g., a clear skill gap in the team; a crowded market with unclear differentiation; a product with usability issues).
+        *   **Score 1: Significant Concern / Deal-Breaker**
+            *   This factor is a major flaw that fundamentally undermines the investment thesis. It is a red flag and a likely reason to pass on the deal (e.g., a non-credible or incomplete team; a non-existent or shrinking market; a product with no clear value proposition or fatal flaws).
+
+    Return your step-by-step analysis and return your analysis as a JSON object matching the `ExternalitiesAnalysis` schema.
     """
     agent_system_instruction = """
       #### **Agent 4: Externalities Analyst**
@@ -507,6 +625,19 @@ async def run_agent_5_competition(state: AnalysisSharedState) -> CompetitionAnal
     3.  What is this company's primary competitive advantage?
     4.  From the decision-maker's perspective, is there a clear net positive in switching?
     5.  Briefly analyze the switching costs (time, money, effort).
+    
+    Based on your entire analysis for your specific area of expertise, provide a final quantitative assessment by populating the `assessment` field in your response. You MUST use the following 1-5 scoring rubric. Your rationale must be a concise justification for the score, citing specific evidence from your analysis.
+    **--- SCORING RUBRIC ---**
+        *   **Score 5: Exceptional**
+            *   This factor is a massive strength and a core reason to invest. It represents a world-class, top 1% advantage (e.g., a truly visionary founding team with deep, relevant experience; a massive, untapped market with no competition; a product with an unassailable moat).
+        *   **Score 4: Strong Positive**
+            *   This factor is a clear strength and significantly better than average. It contributes positively to the investment thesis but may not be a generational outlier (e.g., a very strong team with some minor gaps; a large, growing market; a product with clear differentiation).
+        *   **Score 3: Neutral / Average**
+            *   This factor meets expectations but is not a significant strength or weakness. It is credible and fundable but not a core differentiator (e.g., a capable team that is standard for this stage; a well-defined market; a solid product that does its job).
+        *   **Score 2: Minor Concern**
+            *   This factor presents a noticeable weakness or risk that needs to be addressed. It is a yellow flag that requires further diligence but is likely fixable (e.g., a clear skill gap in the team; a crowded market with unclear differentiation; a product with usability issues).
+        *   **Score 1: Significant Concern / Deal-Breaker**
+            *   This factor is a major flaw that fundamentally undermines the investment thesis. It is a red flag and a likely reason to pass on the deal (e.g., a non-credible or incomplete team; a non-existent or shrinking market; a product with no clear value proposition or fatal flaws).
 
     Return your analysis as a JSON object matching the CompetitionAnalysis schema.
     """
@@ -566,6 +697,19 @@ async def run_agent_6_financials(state: AnalysisSharedState) -> FinancialAnalysi
         - **Market Info:** `{state.industry_analysis.summary}`
         - **Pitch Deck Text:** [Pitch deck content will be provided here]
         
+        Based on your entire analysis for your specific area of expertise, provide a final quantitative assessment by populating the `assessment` field in your response. You MUST use the following 1-5 scoring rubric. Your rationale must be a concise justification for the score, citing specific evidence from your analysis.
+        **--- SCORING RUBRIC ---**
+            *   **Score 5: Exceptional**
+                *   This factor is a massive strength and a core reason to invest. It represents a world-class, top 1% advantage (e.g., a truly visionary founding team with deep, relevant experience; a massive, untapped market with no competition; a product with an unassailable moat).
+            *   **Score 4: Strong Positive**
+                *   This factor is a clear strength and significantly better than average. It contributes positively to the investment thesis but may not be a generational outlier (e.g., a very strong team with some minor gaps; a large, growing market; a product with clear differentiation).
+            *   **Score 3: Neutral / Average**
+                *   This factor meets expectations but is not a significant strength or weakness. It is credible and fundable but not a core differentiator (e.g., a capable team that is standard for this stage; a well-defined market; a solid product that does its job).
+            *   **Score 2: Minor Concern**
+                *   This factor presents a noticeable weakness or risk that needs to be addressed. It is a yellow flag that requires further diligence but is likely fixable (e.g., a clear skill gap in the team; a crowded market with unclear differentiation; a product with usability issues).
+            *   **Score 1: Significant Concern / Deal-Breaker**
+                *   This factor is a major flaw that fundamentally undermines the investment thesis. It is a red flag and a likely reason to pass on the deal (e.g., a non-credible or incomplete team; a non-existent or shrinking market; a product with no clear value proposition or fatal flaws).
+
         Now, perform your step-by-step analysis and return your analysis as a JSON object matching the `FinancialAnalysis` schema.
     """
 
@@ -588,13 +732,24 @@ async def run_agent_7_synergies(state: AnalysisSharedState, portfolio_data: List
     prompt = f"""
     You are a Venture Capital Partner. Your goal is to find synergies with our existing portfolio.
     - Identified Founder Skill Gaps: {state.founder_analysis.identified_gaps}
-    - Identified External Threats: {state.externalities_analysis.key_threats}
+    - Identified External Threats: {state.externalities_analysis.identified_risks}
     - Our VC Portfolio: {'Not Available' if portfolio_data == [] else portfolio_data}
 
     1.  What specific, actionable synergies exist between this startup and our portfolio companies? (e.g., "Cross-sell Product A to Portfolio Co. B's customer base").
     2.  Can a connection to our portfolio companies help close the identified skill gaps?
-    3.  Can our portfolio help mitigate any of the identified external threats?
-
+    3.  Can our portfolio help mitigate any of the identified external threats?    
+    Based on your entire analysis for your specific area of expertise, provide a final quantitative assessment by populating the `assessment` field in your response. You MUST use the following 1-5 scoring rubric. Your rationale must be a concise justification for the score, citing specific evidence from your analysis.
+    **--- SCORING RUBRIC ---**
+        *   **Score 5: Exceptional**
+            *   This factor is a massive strength and a core reason to invest. It represents a world-class, top 1% advantage (e.g., a truly visionary founding team with deep, relevant experience; a massive, untapped market with no competition; a product with an unassailable moat).
+        *   **Score 4: Strong Positive**
+            *   This factor is a clear strength and significantly better than average. It contributes positively to the investment thesis but may not be a generational outlier (e.g., a very strong team with some minor gaps; a large, growing market; a product with clear differentiation).
+        *   **Score 3: Neutral / Average**
+            *   This factor meets expectations but is not a significant strength or weakness. It is credible and fundable but not a core differentiator (e.g., a capable team that is standard for this stage; a well-defined market; a solid product that does its job).
+        *   **Score 2: Minor Concern**
+            *   This factor presents a noticeable weakness or risk that needs to be addressed. It is a yellow flag that requires further diligence but is likely fixable (e.g., a clear skill gap in the team; a crowded market with unclear differentiation; a product with usability issues).
+        *   **Score 1: Significant Concern / Deal-Breaker**
+            *   This factor is a major flaw that fundamentally undermines the investment thesis. It is a red flag and a likely reason to pass on the deal (e.g., a non-credible or incomplete team; a non-existent or shrinking market; a product with no clear value proposition or fatal flaws).
     Return your analysis as a JSON object matching the SynergyAnalysis schema.
     """
     agent_system_instruction = """
@@ -652,18 +807,6 @@ async def run_investment_analysis(pitch_deck_urls: List[str], company_name: str,
     print("\n--- Full Analysis Complete ---")
     return state
 
-
-def fetch_input_pdf(prompt_pdf_input):
-  research_pdf = []
-  for each_pdf in prompt_pdf_input:
-    research_pdf.append(
-        client.files.upload(
-      file=each_pdf,
-      config=dict(mime_type='application/pdf')
-      )
-    )
-
-  return research_pdf
 
 
 if __name__ == "__main__":
