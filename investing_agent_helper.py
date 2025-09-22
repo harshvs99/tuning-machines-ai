@@ -3,10 +3,12 @@
 Original file is located at
     https://colab.research.google.com/drive/1GJv0LRheNdvo567SvyEOLoqpJrwMhNPb
 """
+from google.api_core.exceptions import ServiceUnavailable
 # !pip install --quiet google-cloud-storage google-cloud-aiplatform google-cloud-bigquery PyPDF2 fpdf2
 # !gcloud config set project tuning-machines
 
 from google.cloud.aiplatform_v1beta1 import GenerateContentResponse
+from tenacity import wait_exponential, retry, stop_after_attempt, retry_if_exception_type, retry_if_exception
 
 """## Project Config"""
 
@@ -22,6 +24,8 @@ from typing import Type, TypeVar, Dict, List, Optional, Literal
 from pydantic import BaseModel, ValidationError, Field
 from google import genai
 from google.genai import types
+from google.api_core.exceptions import ResourceExhausted, ServiceUnavailable
+from tenacity import retry, stop_after_attempt, wait_exponential
 import asyncio
 from dotenv import load_dotenv
 import os
@@ -381,7 +385,11 @@ class AnalysisSharedState(BaseModel):
 
 # Generic Type for Pydantic models
 T = TypeVar('T', bound=BaseModel)
-
+@retry(
+    wait = wait_exponential(multiplier=1, min=4, max=60), #Exponential backoff with min 4s, max 60s delay
+    stop = stop_after_attempt(3),
+    retry = retry_if_exception_type(ResourceExhausted) | retry_if_exception_type(ServiceUnavailable)
+)
 async def invoke_gemini_agent(
     agent_name: str,
     prompt: str,
@@ -418,7 +426,8 @@ async def invoke_gemini_agent(
         )
         stopping_phrase = json.loads(response.model_dump_json())["candidates"][0]["finish_reason"]
         if stopping_phrase != 'STOP':
-          print(f"Current stopping phrase {stopping_phrase}")
+            print(f"Current stopping phrase {stopping_phrase}")
+            raise Exception(f"Current stopping phrase {stopping_phrase}")
 
         # Clean and parse the JSON response
         json_text = response.text.strip().replace("```json", "").replace("```", "")

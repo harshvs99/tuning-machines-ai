@@ -2,6 +2,8 @@
 FastAPI application for investment analysis.
 """
 import asyncio
+import os
+import shutil
 
 from fastapi import FastAPI, HTTPException
 from typing import List
@@ -46,8 +48,7 @@ async def analyze_investment(agent_type: str, request: AnalysisRequest):
     try:
         # Call the investing agent function
         # result = await investing_agent.run_investment_analysis(request.pitchdeck_urls).model_dump_json()
-        # result = await investing_agent.run_investment_analysis(pitch_deck_urls=investing_agent.fetch_all_required_files(request.documents_url,
-        #                                                                                                                       request.company_name),
+        # result = await investing_agent.run_investment_analysis(pitch_deck_urls=investing_agent.fetch_all_required_files(request.documents_url, request.company_name),
         #                                     company_name=request.company_name).model_dump_json()
         local_state = False
         locally_downloaded_files = []
@@ -66,7 +67,10 @@ async def analyze_investment(agent_type: str, request: AnalysisRequest):
                                                                     company_name=request.company_name)
         result = final_state.model_dump_json()
         # result["agent_type"] = agent_type
-        
+
+        shutil.rmtree(os.path.join(os.getcwd(), "data", request.company_name)) # Remove all the files in the folder
+        print("Remove all the files associated with the company name")
+
         return result
         
     except Exception as e:
