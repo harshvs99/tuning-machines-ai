@@ -2,6 +2,7 @@
 FastAPI application for investment analysis.
 """
 import asyncio
+import json
 import os
 import shutil
 
@@ -65,13 +66,13 @@ async def analyze_investment(agent_type: str, request: AnalysisRequest):
         if local_state:
             final_state = await investing_agent.run_investment_analysis(pitch_deck_urls=investing_agent.fetch_all_required_files(request.documents_url,request.company_name),
                                                                     company_name=request.company_name)
-        result = final_state.model_dump_json()
+        # result = final_state.model_dump_json()
         # result["agent_type"] = agent_type
 
         shutil.rmtree(os.path.join(os.getcwd(), "data", request.company_name)) # Remove all the files in the folder
         print("Remove all the files associated with the company name")
 
-        return result
+        return final_state
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
