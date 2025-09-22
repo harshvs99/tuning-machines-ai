@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 from typing import List
 from pydantic import BaseModel
 import investing_agent_helper as investing_agent
+from helper import download_public_file
 
 app = FastAPI(title="Investment Analysis API", version="1.0.0")
 
@@ -48,7 +49,20 @@ async def analyze_investment(agent_type: str, request: AnalysisRequest):
         # result = await investing_agent.run_investment_analysis(pitch_deck_urls=investing_agent.fetch_all_required_files(request.documents_url,
         #                                                                                                                       request.company_name),
         #                                     company_name=request.company_name).model_dump_json()
-        final_state = await investing_agent.run_investment_analysis(pitch_deck_urls=investing_agent.fetch_all_required_files(request.documents_url,request.company_name),
+        local_state = False
+        locally_downloaded_files = []
+        for document in request.documents_url:
+            locally_downloaded_files.append(
+                download_public_file(
+                url=document,
+                company_name=investing_agent.company_name
+                )
+            )
+
+        final_state = await investing_agent.run_investment_analysis(pitch_deck_urls=investing_agent.document_url,
+                                                                    company_name=request.company_name)
+        if local_state:
+            final_state = await investing_agent.run_investment_analysis(pitch_deck_urls=investing_agent.fetch_all_required_files(request.documents_url,request.company_name),
                                                                     company_name=request.company_name)
         result = final_state.model_dump_json()
         # result["agent_type"] = agent_type

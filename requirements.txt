@@ -9,3 +9,5 @@ google-cloud-bigquery
 PyPDF2
 fpdf2
 dotenv
+google-cloud-storage
+requests
