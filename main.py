@@ -14,7 +14,7 @@ app = FastAPI(title="Investment Analysis API", version="1.0.0")
 
 class AnalysisRequest(BaseModel):
     """Request model for investment analysis."""
-    documents_url: str
+    documents_url: List[str]
     company_name: str
 
 @app.get("/")
@@ -55,11 +55,11 @@ async def analyze_investment(agent_type: str, request: AnalysisRequest):
             locally_downloaded_files.append(
                 download_public_file(
                 url=document,
-                company_name=investing_agent.company_name
+                company_name=request.company_name
                 )
             )
 
-        final_state = await investing_agent.run_investment_analysis(pitch_deck_urls=investing_agent.document_url,
+        final_state = await investing_agent.run_investment_analysis(pitch_deck_urls=locally_downloaded_files,
                                                                     company_name=request.company_name)
         if local_state:
             final_state = await investing_agent.run_investment_analysis(pitch_deck_urls=investing_agent.fetch_all_required_files(request.documents_url,request.company_name),
